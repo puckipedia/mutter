@@ -381,6 +381,97 @@ meta_screen_cast_monitor_stream_src_record_frame (MetaScreenCastStreamSrc *src,
   return TRUE;
 }
 
+static CoglDmaBufHandle *
+meta_screen_cast_monitor_stream_src_capture_dma_buf (MetaScreenCastStreamSrc *src)
+{
+  CoglContext *context =
+    clutter_backend_get_cogl_context (clutter_get_default_backend ());
+  MetaScreenCastMonitorStreamSrc *monitor_src =
+    META_SCREEN_CAST_MONITOR_STREAM_SRC (src);
+  g_autoptr (GError) error = NULL;
+  CoglDmaBufHandle *dmabuf_handle;
+  MetaMonitor *monitor;
+  MetaLogicalMonitor *logical_monitor;
+  MetaRectangle logical_monitor_layout;
+
+  monitor = get_monitor (monitor_src);
+  logical_monitor = meta_monitor_get_logical_monitor (monitor);
+  logical_monitor_layout = meta_logical_monitor_get_layout (logical_monitor);
+
+  dmabuf_handle = cogl_context_capture_dma_buf (context,
+                                                logical_monitor_layout.width,
+                                                logical_monitor_layout.height,
+                                                &error);
+
+  if (error)
+    {
+      g_debug ("Error exporting DMA buffer handle: %s", error->message);
+      return NULL;
+    }
+
+  return dmabuf_handle;
+}
+
+static gboolean
+meta_screen_cast_monitor_stream_src_blit_to_framebuffer (MetaScreenCastStreamSrc *src,
+                                                         CoglFramebuffer         *framebuffer)
+{
+  MetaScreenCastMonitorStreamSrc *monitor_src =
+    META_SCREEN_CAST_MONITOR_STREAM_SRC (src);
+  g_autoptr (GError) error = NULL;
+
+
+  MetaBackend *backend = get_backend (monitor_src);
+  MetaRenderer *renderer = meta_backend_get_renderer (backend);
+  MetaMonitor *monitor;
+  MetaLogicalMonitor *logical_monitor;
+  MetaRectangle logical_monitor_layout;
+  GList *l;
+
+
+  monitor = get_monitor (monitor_src);
+  logical_monitor = meta_monitor_get_logical_monitor (monitor);
+  logical_monitor_layout = meta_logical_monitor_get_layout (logical_monitor);
+
+  cogl_framebuffer_clear4f (framebuffer,
+                            COGL_BUFFER_BIT_COLOR,
+                            0.f, 0.f, 0.f, 1.f);
+
+  for (l = meta_renderer_get_views (renderer); l; l = l->next)
+    {
+      ClutterStageView *view = CLUTTER_STAGE_VIEW (l->data);
+      CoglFramebuffer *view_framebuffer;
+      MetaRectangle view_layout;
+
+      clutter_stage_view_get_layout (view, &view_layout);
+
+      if (!meta_rectangle_overlap (&logical_monitor_layout, &view_layout))
+        continue;
+
+      view_framebuffer = clutter_stage_view_get_framebuffer (view);
+
+      cogl_blit_framebuffer (view_framebuffer,
+                             framebuffer,
+                             0, 0,
+                             view_layout.x - logical_monitor_layout.x,
+                             view_layout.y - logical_monitor_layout.y,
+                             cogl_framebuffer_get_width (view_framebuffer),
+                             cogl_framebuffer_get_height (view_framebuffer),
+                             &error);
+    }
+
+  cogl_framebuffer_flush (framebuffer);
+
+  if (error)
+    {
+      g_warning ("Error blitting onscreen into DMABuf framebuffer: %s",
+                 error->message);
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
 static void
 meta_screen_cast_monitor_stream_src_set_cursor_metadata (MetaScreenCastStreamSrc *src,
                                                          struct spa_meta_cursor  *spa_meta_cursor)
@@ -502,6 +593,10 @@ meta_screen_cast_monitor_stream_src_class_init (MetaScreenCastMonitorStreamSrcCl
   src_class->enable = meta_screen_cast_monitor_stream_src_enable;
   src_class->disable = meta_screen_cast_monitor_stream_src_disable;
   src_class->record_frame = meta_screen_cast_monitor_stream_src_record_frame;
+  src_class->capture_dma_buf =
+    meta_screen_cast_monitor_stream_src_capture_dma_buf;
+  src_class->blit_to_framebuffer =
+    meta_screen_cast_monitor_stream_src_blit_to_framebuffer;
   src_class->set_cursor_metadata =
     meta_screen_cast_monitor_stream_src_set_cursor_metadata;
 }

@@ -616,3 +616,19 @@ cogl_get_graphics_reset_status (CoglContext *context)
       return COGL_GRAPHICS_RESET_STATUS_NO_ERROR;
     }
 }
+
+CoglDmaBufHandle *
+cogl_context_capture_dma_buf (CoglContext  *context,
+                              int           width,
+                              int           height,
+                              GError      **error)
+{
+  const CoglWinsysVtable *winsys;
+
+  winsys = context->display->renderer->winsys_vtable;
+
+  if (winsys->context_capture_dma_buf)
+    return winsys->context_capture_dma_buf (context, width, height, error);
+
+  return NULL;
+}

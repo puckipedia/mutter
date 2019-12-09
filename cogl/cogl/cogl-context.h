@@ -353,6 +353,25 @@ typedef enum _CoglGraphicsResetStatus
 CoglGraphicsResetStatus
 cogl_get_graphics_reset_status (CoglContext *context);
 
+/**
+ * cogl_context_capture_dma_buf: (skip)
+ * @context: A #CoglContext
+ * @width: width of the new
+ * @error: (nullable): return location for a #GError
+ *
+ * Creates a new #CoglFramebuffer with @width x @height, and format hardcoded
+ * to XRGB, and exports the new framebuffer's DMA buffer handle.
+ *
+ * Returns: (nullable)(transfer full): a #CoglDmaBufHandle. The
+ * return result must be released with cogl_framebuffer_dmabuf_handle_release()
+ * after use.
+ */
+CoglDmaBufHandle *
+cogl_context_capture_dma_buf (CoglContext  *context,
+                              int           width,
+                              int           height,
+                              GError      **error);
+
 G_END_DECLS
 
 #endif /* __COGL_CONTEXT_H__ */

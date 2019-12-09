@@ -97,6 +97,12 @@ typedef struct _CoglWinsysVtable
   void
   (*context_deinit) (CoglContext *context);
 
+  CoglDmaBufHandle *
+  (*context_capture_dma_buf) (CoglContext  *context,
+                              int           width,
+                              int           height,
+                              GError      **error);
+
   gboolean
   (*onscreen_init) (CoglOnscreen *onscreen, GError **error);
 

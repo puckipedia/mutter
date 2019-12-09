@@ -25,6 +25,7 @@
 #include "backends/meta-screen-cast-stream-src.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/props.h>
 #include <spa/param/format-utils.h>
@@ -473,7 +474,8 @@ meta_screen_cast_stream_src_maybe_record_frame (MetaScreenCastStreamSrc *src)
       return;
     }
 
-  if (meta_screen_cast_stream_src_record_frame (src, data))
+  if (spa_buffer->datas[0].type != SPA_DATA_DmaBuf &&
+      meta_screen_cast_stream_src_record_frame (src, data))
     {
       struct spa_meta_region *spa_meta_video_crop;
 
@@ -642,10 +644,106 @@ on_stream_param_changed (void                 *data,
   pw_stream_update_params (priv->pipewire_stream, params, G_N_ELEMENTS (params));
 }
 
+static void
+on_stream_add_buffer (void             *data,
+                      struct pw_buffer *buffer)
+{
+  MetaScreenCastStreamSrc *src = data;
+  MetaScreenCastStreamSrcPrivate *priv =
+    meta_screen_cast_stream_src_get_instance_private (src);
+  CoglDmaBufHandle *dmabuf_handle;
+  struct spa_buffer *spa_buffer = buffer->buffer;
+  struct spa_data *spa_data = spa_buffer->datas;
+  const int bpp = 4;
+  int stride;
+
+  dmabuf_handle = meta_screen_cast_stream_src_capture_dma_buf (src);
+
+  stride = SPA_ROUND_UP_N (priv->video_format.size.width * bpp, 4);
+
+  spa_data[0].mapoffset = 0;
+  spa_data[0].maxsize = stride * priv->video_format.size.height;
+
+  if (dmabuf_handle)
+    {
+      spa_data[0].type = SPA_DATA_DmaBuf;
+      spa_data[0].flags = SPA_DATA_FLAG_READWRITE;
+      spa_data[0].fd = cogl_dma_buf_handle_get_fd (dmabuf_handle);
+      spa_data[0].data = NULL;
+
+      g_hash_table_insert (priv->dmabuf_handles,
+                           GINT_TO_POINTER (spa_data[0].fd),
+                           dmabuf_handle);
+    }
+  else
+    {
+      unsigned int seals;
+
+      /* Fallback to a memfd buffer */
+      spa_data[0].type = SPA_DATA_MemFd;
+      spa_data[0].flags = SPA_DATA_FLAG_READWRITE;
+      spa_data[0].fd = memfd_create ("mutter-screen-cast-memfd",
+                                     MFD_CLOEXEC | MFD_ALLOW_SEALING);
+      if (spa_data[0].fd == -1)
+        {
+          g_critical ("Can't create memfd: %m");
+          return;
+        }
+      spa_data[0].mapoffset = 0;
+      spa_data[0].maxsize = stride * priv->video_format.size.height;
+
+      if (ftruncate (spa_data[0].fd, spa_data[0].maxsize) < 0)
+        {
+          g_critical ("Can't truncate to %d: %m", spa_data[0].maxsize);
+          return;
+        }
+
+      seals = F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL;
+      if (fcntl (spa_data[0].fd, F_ADD_SEALS, seals) == -1)
+        g_warning ("Failed to add seals: %m");
+
+      spa_data[0].data = mmap (NULL,
+                               spa_data[0].maxsize,
+                               PROT_READ | PROT_WRITE,
+                               MAP_SHARED,
+                               spa_data[0].fd,
+                               spa_data[0].mapoffset);
+      if (spa_data[0].data == MAP_FAILED)
+        {
+          g_critical ("Failed to mmap memory: %m");
+          return;
+        }
+    }
+}
+
+static void
+on_stream_remove_buffer (void             *data,
+                         struct pw_buffer *buffer)
+{
+  MetaScreenCastStreamSrc *src = data;
+  MetaScreenCastStreamSrcPrivate *priv =
+    meta_screen_cast_stream_src_get_instance_private (src);
+  struct spa_buffer *spa_buffer = buffer->buffer;
+  struct spa_data *spa_data = spa_buffer->datas;
+
+  if (spa_data[0].type == SPA_DATA_DmaBuf)
+    {
+      if (!g_hash_table_remove (priv->dmabuf_handles, GINT_TO_POINTER (spa_data[0].fd)))
+        g_critical ("Failed to remove non-exported DMA buffer");
+    }
+  else if (spa_data[0].type == SPA_DATA_MemFd)
+    {
+      munmap (spa_data[0].data, spa_data[0].maxsize);
+      close (spa_data[0].fd);
+    }
+}
+
 static const struct pw_stream_events stream_events = {
   PW_VERSION_STREAM_EVENTS,
   .state_changed = on_stream_state_changed,
   .param_changed = on_stream_param_changed,
+  .add_buffer = on_stream_add_buffer,
+  .remove_buffer = on_stream_remove_buffer,
 };
 
 static struct pw_stream *
@@ -710,7 +808,7 @@ create_pipewire_stream (MetaScreenCastStreamSrc  *src,
                               PW_DIRECTION_OUTPUT,
                               SPA_ID_INVALID,
                               (PW_STREAM_FLAG_DRIVER |
-                               PW_STREAM_FLAG_MAP_BUFFERS),
+                               PW_STREAM_FLAG_ALLOC_BUFFERS),
                               params, G_N_ELEMENTS (params));
   if (result != 0)
     {

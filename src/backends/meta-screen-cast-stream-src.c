@@ -90,6 +90,8 @@ typedef struct _MetaScreenCastStreamSrcPrivate
 
   uint64_t last_frame_timestamp_us;
 
+  GHashTable *dmabuf_handles;
+
   int stream_width;
   int stream_height;
 } MetaScreenCastStreamSrcPrivate;
@@ -137,6 +139,28 @@ meta_screen_cast_stream_src_record_frame (MetaScreenCastStreamSrc *src,
     META_SCREEN_CAST_STREAM_SRC_GET_CLASS (src);
 
   return klass->record_frame (src, data);
+}
+
+static CoglDmaBufHandle *
+meta_screen_cast_stream_src_capture_dma_buf (MetaScreenCastStreamSrc *src)
+{
+  MetaScreenCastStreamSrcClass *klass =
+    META_SCREEN_CAST_STREAM_SRC_GET_CLASS (src);
+
+  if (klass->capture_dma_buf)
+    return klass->capture_dma_buf (src);
+
+  return NULL;
+}
+
+static gboolean
+meta_screen_cast_stream_src_blit_to_framebuffer (MetaScreenCastStreamSrc *src,
+                                                 CoglFramebuffer         *framebuffer)
+{
+  MetaScreenCastStreamSrcClass *klass =
+    META_SCREEN_CAST_STREAM_SRC_GET_CLASS (src);
+
+  return klass->blit_to_framebuffer (src, framebuffer);
 }
 
 static void
@@ -854,6 +878,7 @@ meta_screen_cast_stream_src_finalize (GObject *object)
   if (meta_screen_cast_stream_src_is_enabled (src))
     meta_screen_cast_stream_src_disable (src);
 
+  g_clear_pointer (&priv->dmabuf_handles, g_hash_table_destroy);
   g_clear_pointer (&priv->pipewire_stream, pw_stream_destroy);
   g_clear_pointer (&priv->pipewire_core, pw_core_disconnect);
   g_clear_pointer (&priv->pipewire_context, pw_context_destroy);
@@ -905,6 +930,13 @@ meta_screen_cast_stream_src_get_property (GObject    *object,
 static void
 meta_screen_cast_stream_src_init (MetaScreenCastStreamSrc *src)
 {
+  MetaScreenCastStreamSrcPrivate *priv =
+    meta_screen_cast_stream_src_get_instance_private (src);
+
+  priv->dmabuf_handles =
+    g_hash_table_new_full (g_direct_hash, g_direct_equal,
+                           NULL,
+                           (GDestroyNotify) cogl_dma_buf_handle_free);
 }
 
 static void

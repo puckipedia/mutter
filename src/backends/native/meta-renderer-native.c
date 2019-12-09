@@ -2132,6 +2132,66 @@ meta_onscreen_native_swap_buffers_with_damage (CoglOnscreen *onscreen,
   COGL_TRACE_END (MetaRendererNativePostKmsUpdate);
 }
 
+static CoglDmaBufHandle *
+meta_onscreen_native_capture_dma_buf (CoglContext  *context,
+                                      int           width,
+                                      int           height,
+                                      GError      **error)
+{
+  CoglRenderer *cogl_renderer = context->display->renderer;
+  CoglRendererEGL *cogl_renderer_egl = cogl_renderer->winsys;
+  MetaRendererNativeGpuData *renderer_gpu_data = cogl_renderer_egl->platform;
+  MetaRendererNative *renderer_native = renderer_gpu_data->renderer_native;
+  int dmabuf_fd = -1;
+
+  switch (renderer_gpu_data->mode)
+    {
+    case META_RENDERER_NATIVE_MODE_GBM:
+      {
+        CoglFramebuffer *dmabuf_fb;
+        struct gbm_bo *new_bo;
+
+        new_bo = gbm_bo_create (renderer_gpu_data->gbm.device,
+                                width, height, DRM_FORMAT_XRGB8888,
+                                GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+        dmabuf_fd = gbm_bo_get_fd (new_bo);
+
+        if (dmabuf_fd == -1)
+          {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                         "Failed to export dma-buf fd: %s",
+                         g_strerror (errno));
+            return NULL;
+          }
+
+        dmabuf_fb = create_dmabuf_image (renderer_native,
+                                         dmabuf_fd,
+                                         width, height,
+                                         gbm_bo_get_stride (new_bo),
+                                         0,
+                                         DRM_FORMAT_MOD_LINEAR,
+                                         DRM_FORMAT_XRGB8888,
+                                         error);
+
+        if (*error)
+          return NULL;
+
+        return cogl_dma_buf_handle_new (dmabuf_fb, dmabuf_fd, new_bo,
+                                        (GDestroyNotify) gbm_bo_destroy);
+      }
+      break;
+#ifdef HAVE_EGL_DEVICE
+    case META_RENDERER_NATIVE_MODE_EGL_DEVICE:
+      break;
+#endif
+    }
+
+  g_set_error (error, G_IO_ERROR, G_IO_ERROR_UNKNOWN,
+               "Current mode does not support exporting DMA buffers");
+
+  return NULL;
+}
+
 static gboolean
 meta_renderer_native_init_egl_context (CoglContext *cogl_context,
                                        GError     **error)
@@ -2871,6 +2931,8 @@ get_native_cogl_winsys_vtable (CoglRenderer *cogl_renderer)
 
       vtable.id = COGL_WINSYS_ID_CUSTOM;
       vtable.name = "EGL_KMS";
+
+      vtable.context_capture_dma_buf = meta_onscreen_native_capture_dma_buf;
 
       vtable.renderer_connect = meta_renderer_native_connect;
       vtable.renderer_disconnect = meta_renderer_native_disconnect;

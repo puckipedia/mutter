@@ -2168,13 +2168,18 @@ process_locate_pointer_key (MetaDisplay     *display,
                             MetaWindow      *window)
 {
   MetaKeyBindingManager *keys = &display->key_binding_manager;
+  gboolean retval;
 
-  return process_special_modifier_key (display,
-                                       event,
-                                       window,
-                                       &keys->locate_pointer_key_only_pressed,
-                                       &keys->locate_pointer_resolved_key_combo,
-                                       (GFunc) handle_locate_pointer);
+  retval = process_special_modifier_key (display,
+                                         event,
+                                         window,
+                                         &keys->locate_pointer_key_only_pressed,
+                                         &keys->locate_pointer_resolved_key_combo,
+                                         (GFunc) handle_locate_pointer);
+  if (!keys->locate_pointer_key_only_pressed)
+    return FALSE;
+
+  return retval;
 }
 
 static gboolean

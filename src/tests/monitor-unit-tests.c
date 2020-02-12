@@ -5310,6 +5310,7 @@ meta_test_monitor_custom_lid_switch_config (void)
           .crtc = -1,
           .modes = { 0 },
           .n_modes = 1,
+          .serial = "0x654321",
           .preferred_mode = 0,
           .possible_crtcs = { 1 },
           .n_possible_crtcs = 1,
@@ -5410,6 +5411,8 @@ meta_test_monitor_custom_lid_switch_config (void)
   MetaMonitorTestSetup *test_setup;
   MetaBackend *backend = meta_get_backend ();
 
+  g_debug ("Initial configuration (only internal screen)");
+
   test_setup = create_monitor_test_setup (&test_case,
                                           MONITOR_TEST_FLAG_NONE);
   set_custom_monitor_config ("lid-switch.xml");
@@ -5417,6 +5420,7 @@ meta_test_monitor_custom_lid_switch_config (void)
   check_monitor_configuration (&test_case);
 
   /* External monitor connected */
+  g_debug ("External monitor connected");
 
   test_case.setup.n_outputs = 2;
   test_case.expect.n_monitors = 2;
@@ -5437,6 +5441,7 @@ meta_test_monitor_custom_lid_switch_config (void)
   check_monitor_configuration (&test_case);
 
   /* Lid was closed */
+  g_debug ("Closing lid");
 
   test_case.expect.crtcs[0].current_mode = -1;
   test_case.expect.crtcs[1].transform = META_MONITOR_TRANSFORM_90;
@@ -5455,6 +5460,7 @@ meta_test_monitor_custom_lid_switch_config (void)
   check_monitor_configuration (&test_case);
 
   /* Lid was opened */
+  g_debug ("Opening lid");
 
   test_case.expect.crtcs[0].current_mode = 0;
   test_case.expect.crtcs[0].transform = META_MONITOR_TRANSFORM_NORMAL;

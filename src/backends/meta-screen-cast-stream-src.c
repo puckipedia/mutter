@@ -419,6 +419,33 @@ maybe_record_cursor (MetaScreenCastStreamSrc *src,
   g_assert_not_reached ();
 }
 
+static gboolean
+do_record_frame (MetaScreenCastStreamSrc *src,
+                 struct spa_buffer       *spa_buffer,
+                 uint8_t                 *data)
+{
+  MetaScreenCastStreamSrcPrivate *priv =
+    meta_screen_cast_stream_src_get_instance_private (src);
+
+  if (spa_buffer->datas[0].data ||
+      spa_buffer->datas[0].type == SPA_DATA_MemFd)
+    {
+      return meta_screen_cast_stream_src_record_frame (src, data);
+    }
+  else if (spa_buffer->datas[0].type == SPA_DATA_DmaBuf)
+    {
+      CoglDmaBufHandle *dmabuf_handle =
+        g_hash_table_lookup (priv->dmabuf_handles,
+                             GINT_TO_POINTER (spa_buffer->datas[0].fd));
+      CoglFramebuffer *dmabuf_fbo =
+        cogl_dma_buf_handle_get_framebuffer (dmabuf_handle);
+
+      return meta_screen_cast_stream_src_blit_to_framebuffer (src, dmabuf_fbo);
+    }
+
+  return FALSE;
+}
+
 void
 meta_screen_cast_stream_src_maybe_record_frame (MetaScreenCastStreamSrc *src)
 {
@@ -428,7 +455,7 @@ meta_screen_cast_stream_src_maybe_record_frame (MetaScreenCastStreamSrc *src)
   struct pw_buffer *buffer;
   struct spa_buffer *spa_buffer;
   uint8_t *map = NULL;
-  uint8_t *data;
+  uint8_t *data = NULL;
   uint64_t now_us;
 
   now_us = g_get_monotonic_time ();
@@ -468,14 +495,17 @@ meta_screen_cast_stream_src_maybe_record_frame (MetaScreenCastStreamSrc *src)
 
       data = SPA_MEMBER (map, spa_buffer->datas[0].mapoffset, uint8_t);
     }
+  else if (spa_buffer->datas[0].type == SPA_DATA_DmaBuf)
+    {
+      /* Do nothing */
+    }
   else
     {
       g_warning ("Unhandled spa buffer type: %d", spa_buffer->datas[0].type);
       return;
     }
 
-  if (spa_buffer->datas[0].type != SPA_DATA_DmaBuf &&
-      meta_screen_cast_stream_src_record_frame (src, data))
+  if (do_record_frame (src, spa_buffer, data))
     {
       struct spa_meta_region *spa_meta_video_crop;
 
